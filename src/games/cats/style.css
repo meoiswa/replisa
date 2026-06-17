@@ -90,14 +90,13 @@
 
 .cell.cross::after {
   content: '✕';
-  font-size: 0.7em;
-  opacity: 0.5;
+  font-size: 0.95em;
   color: var(--text);
 }
 
 .cell.cat::after {
-  content: '🐱';
-  font-size: 0.85em;
+  content: attr(data-emoji);
+  font-size: 1.05em;
 }
 
 .cell.hint-highlight {

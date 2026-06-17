@@ -2,14 +2,17 @@ import './style.css'
 import { generateLevel } from './generator'
 import { createGameState, placeCat, toggleCross, useHint, hintsAvailable, updateHintTimer, msUntilNextHint } from './game'
 import type { GameState } from './game'
+import { mulberry32, shuffle } from './rng'
 import { go } from '../../router'
 
 type Mode = 'cat' | 'cross'
 
 const REGION_COLORS = ['r0','r1','r2','r3','r4','r5','r6','r7','r8','r9','r10','r11']
+const CAT_EMOJIS = ['🐱', '🐈', '🐈‍⬛', '😺', '😸', '😻', '😼', '😽', '🙀']
 
 let state: GameState | null = null
 let mode: Mode = 'cat'
+let rowEmojis: string[] = []
 let hintCell: [number, number] | null = null
 let hintToastTimeout: ReturnType<typeof setTimeout> | null = null
 let timerInterval: ReturnType<typeof setInterval> | null = null
@@ -20,6 +23,9 @@ export function renderCatsGame(levelNum: number): void {
   state = createGameState(level)
   mode = 'cat'
   hintCell = null
+  const emojiRng = mulberry32(levelNum ^ 0xca7face5)
+  const base = shuffle([...CAT_EMOJIS], emojiRng)
+  rowEmojis = Array.from({ length: level.size }, (_, i) => base[i % base.length])
   render()
   timerInterval = setInterval(() => {
     if (!state) return
@@ -78,7 +84,7 @@ function renderCells(s: GameState): string {
       const isHint = hintCell && hintCell[0] === row && hintCell[1] === col
       html += `<div class="cell ${cell} ${isHint ? 'hint-highlight' : ''}"
         style="background:var(--${REGION_COLORS[rid % REGION_COLORS.length]})"
-        data-row="${row}" data-col="${col}"></div>`
+        data-row="${row}" data-col="${col}" data-emoji="${rowEmojis[row] ?? '🐱'}"></div>`
     }
   }
   return html
