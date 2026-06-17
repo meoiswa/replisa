@@ -24,8 +24,9 @@ export function renderCatsGame(levelNum: number): void {
   mode = 'cat'
   hintCell = null
   const emojiRng = mulberry32(levelNum ^ 0xca7face5)
-  const base = shuffle([...CAT_EMOJIS], emojiRng)
-  rowEmojis = Array.from({ length: level.size }, (_, i) => base[i % base.length])
+  const pass1 = shuffle([...CAT_EMOJIS], emojiRng)
+  const pass2 = shuffle([...CAT_EMOJIS], emojiRng)
+  rowEmojis = [...pass1, ...pass2].slice(0, level.size)
   render()
   timerInterval = setInterval(() => {
     if (!state) return
