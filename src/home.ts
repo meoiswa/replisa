@@ -15,7 +15,6 @@ export function renderHome(): void {
   app.innerHTML = `
     <header class="home-header">
       <h1 class="home-title">Replisa</h1>
-      <p class="home-subtitle">Ad-free replicas of mobile games</p>
       <button class="theme-btn" id="themeBtn" aria-label="Toggle dark mode">🌙</button>
     </header>
     <main class="home-main">
@@ -36,7 +35,7 @@ export function renderHome(): void {
 
   document.getElementById('themeBtn')!.addEventListener('click', () => {
     const html = document.documentElement
-    const next = html.dataset.theme === 'dark' ? '' : 'dark'
+    const next = html.dataset.theme === 'dark' ? 'light' : 'dark'
     html.dataset.theme = next
     localStorage.setItem('theme', next)
   })

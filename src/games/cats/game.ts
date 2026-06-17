@@ -80,9 +80,14 @@ export function placeCat(state: GameState, row: number, col: number): PlaceResul
     return { valid: true, miss: false, solved: false }
   }
 
+  if (state.board[row][col] === 'cross') {
+    return { valid: false, miss: false, solved: false }
+  }
+
   const correct = state.solution[row] === col
   if (!correct) {
     state.misses++
+    state.board[row][col] = 'cross'
     return { valid: false, miss: true, solved: false }
   }
 

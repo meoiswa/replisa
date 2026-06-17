@@ -4,12 +4,13 @@ import { initRouter } from './router'
 // Register service worker
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register('/replisa/sw.js').catch(() => {})
+    const base = new URL('./', window.location.href).pathname
+    navigator.serviceWorker.register(`${base}sw.js`, { scope: base }).catch(() => {})
   })
 }
 
 // Apply saved theme
 const saved = localStorage.getItem('theme')
-if (saved) document.documentElement.dataset.theme = saved
+document.documentElement.dataset.theme = saved === 'dark' ? 'dark' : 'light'
 
 initRouter()

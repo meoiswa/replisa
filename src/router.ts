@@ -3,7 +3,11 @@ import { renderCatsGame } from './games/cats/index'
 
 const routes: Record<string, (params: URLSearchParams) => void> = {
   '': (_params) => renderHome(),
-  'cats': (params) => renderCatsGame(parseInt(params.get('level') || '1', 10)),
+  'cats': (params) => {
+    const levelParam = params.get('level')
+    const parsedLevel = levelParam ? parseInt(levelParam, 10) : undefined
+    renderCatsGame(Number.isFinite(parsedLevel) ? parsedLevel : undefined)
+  },
 }
 
 export function initRouter(): void {

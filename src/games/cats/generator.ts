@@ -7,6 +7,9 @@ export interface Level {
   levelNum: number
 }
 
+const MAX_PLACEMENT_ATTEMPTS = 80
+const MAX_REGION_ATTEMPTS = 180
+
 /** Fibonacci-based grid size: 4 at level 1, +1 at each Fibonacci breakpoint */
 export function getGridSize(level: number): number {
   const breakpoints = [2, 3, 5, 8, 13, 21, 34, 55, 89]
@@ -100,11 +103,59 @@ function generateRegions(size: number, placement: number[], rng: () => number): 
   return regions
 }
 
+/** Count valid solutions for a generated board, stopping once limit is reached. */
+function countSolutions(size: number, regions: number[][], limit = 2): number {
+  const placement = new Array<number>(size).fill(-1)
+  const usedCols = new Set<number>()
+  const usedRegions = new Set<number>()
+  let count = 0
+
+  function solve(row: number): void {
+    if (count >= limit) return
+    if (row === size) {
+      count++
+      return
+    }
+
+    for (let col = 0; col < size; col++) {
+      if (usedCols.has(col)) continue
+      const rid = regions[row][col]
+      if (usedRegions.has(rid)) continue
+      // Non-touching rule: adjacent rows cannot be same or neighboring columns.
+      if (row > 0 && Math.abs(placement[row - 1] - col) <= 1) continue
+
+      placement[row] = col
+      usedCols.add(col)
+      usedRegions.add(rid)
+
+      solve(row + 1)
+
+      usedRegions.delete(rid)
+      usedCols.delete(col)
+      placement[row] = -1
+      if (count >= limit) return
+    }
+  }
+
+  solve(0)
+  return count
+}
+
 /** Generate a full level */
 export function generateLevel(levelNum: number): Level {
   const size = getGridSize(levelNum)
   const rng = mulberry32(levelSeed(levelNum))
-  const solution = generatePlacement(size, rng)
-  const regions = generateRegions(size, solution, rng)
-  return { size, regions, solution, levelNum }
+
+  for (let placementAttempt = 0; placementAttempt < MAX_PLACEMENT_ATTEMPTS; placementAttempt++) {
+    const solution = generatePlacement(size, rng)
+
+    for (let regionAttempt = 0; regionAttempt < MAX_REGION_ATTEMPTS; regionAttempt++) {
+      const regions = generateRegions(size, solution, rng)
+      if (countSolutions(size, regions, 2) === 1) {
+        return { size, regions, solution, levelNum }
+      }
+    }
+  }
+
+  throw new Error(`Unable to generate a unique-solution level for level ${levelNum}`)
 }

@@ -44,6 +44,7 @@
   padding: 0.2rem 0.6rem;
   border-radius: 999px;
   font-weight: 600;
+  cursor: pointer;
 }
 
 [data-theme="dark"] .misses-badge {
@@ -161,7 +162,7 @@
 
 .hint-toast {
   position: fixed;
-  bottom: 100px;
+  top: 72px;
   left: 50%;
   transform: translateX(-50%);
   background: var(--surface);
@@ -173,11 +174,11 @@
   max-width: 90vw;
   text-align: center;
   z-index: 100;
-  animation: slideUp 0.2s ease;
+  animation: slideDown 0.2s ease;
 }
 
-@keyframes slideUp {
-  from { transform: translateX(-50%) translateY(20px); opacity: 0; }
+@keyframes slideDown {
+  from { transform: translateX(-50%) translateY(-20px); opacity: 0; }
   to { transform: translateX(-50%) translateY(0); opacity: 1; }
 }
 
