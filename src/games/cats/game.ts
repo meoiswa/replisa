@@ -1,6 +1,4 @@
 import type { Level } from './generator'
-import type { Hint } from './hints'
-import { getHint } from './hints'
 
 export type CellState = 'empty' | 'cross' | 'cat'
 
@@ -15,16 +13,11 @@ export interface GameState {
   catCols: Set<number>
   catRegions: Set<number>
   startTime: number
-  lastHintEarnedTime: number
-  hintsEarned: number
-  hintsUsed: number
   levelNum: number
+  hash: string
 }
 
-const HINT_INTERVAL_MS = 5 * 60 * 1000 // 5 minutes
-
 export function createGameState(level: Level): GameState {
-  const now = Date.now()
   return {
     size: level.size,
     regions: level.regions,
@@ -35,32 +28,10 @@ export function createGameState(level: Level): GameState {
     catRows: new Set(),
     catCols: new Set(),
     catRegions: new Set(),
-    startTime: now,
-    lastHintEarnedTime: now,
-    hintsEarned: 0,
-    hintsUsed: 0,
+    startTime: Date.now(),
     levelNum: level.levelNum,
+    hash: level.hash,
   }
-}
-
-export function hintsAvailable(state: GameState): number {
-  return state.hintsEarned - state.hintsUsed
-}
-
-export function updateHintTimer(state: GameState): boolean {
-  const elapsed = Date.now() - state.lastHintEarnedTime
-  const newHints = Math.floor(elapsed / HINT_INTERVAL_MS)
-  if (newHints > 0) {
-    state.hintsEarned += newHints
-    state.lastHintEarnedTime += newHints * HINT_INTERVAL_MS
-    return true
-  }
-  return false
-}
-
-export function msUntilNextHint(state: GameState): number {
-  const elapsed = Date.now() - state.lastHintEarnedTime
-  return Math.max(0, HINT_INTERVAL_MS - elapsed)
 }
 
 export interface PlaceResult {
@@ -119,11 +90,4 @@ export function placeCat(state: GameState, row: number, col: number): PlaceResul
 export function toggleCross(state: GameState, row: number, col: number): void {
   if (state.board[row][col] === 'cat') return
   state.board[row][col] = state.board[row][col] === 'cross' ? 'empty' : 'cross'
-}
-
-export function useHint(state: GameState): Hint | null {
-  if (hintsAvailable(state) <= 0) return null
-  const hint = getHint(state)
-  if (hint) state.hintsUsed++
-  return hint
 }

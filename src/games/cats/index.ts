@@ -1,17 +1,24 @@
 import './style.css'
 import { generateLevel } from './generator'
-import { createGameState, placeCat, toggleCross, useHint, hintsAvailable, updateHintTimer, msUntilNextHint } from './game'
+import type { Level } from './generator'
+import { GENERATOR_VERSION } from './generator'
+import type { LevelReadyMessage } from './levelWorker'
+import { createGameState, placeCat, toggleCross } from './game'
 import type { CellState, GameState } from './game'
+import * as hintStore from './hintStore'
+import { getHint } from './hints'
 import { mulberry32, shuffle } from './rng'
 import { go } from '../../router'
-
-type Mode = 'cat' | 'cross'
 
 const REGION_COLORS = ['r0','r1','r2','r3','r4','r5','r6','r7','r8','r9','r10','r11']
 const CAT_EMOJIS = ['🐱', '🐈', '🐈‍⬛', '😺', '😸', '😻', '😼', '😽', '🙀']
 const CATS_PROGRESS_KEY = 'replisa.cats.progress.v1'
+const LEVEL_CACHE_KEY = 'replisa.cats.levels.v1'
+const DOUBLE_TAP_MS = 300
+const PRE_GENERATE_COUNT = 10
 
 interface StoredCatsLevelState {
+  hash: string
   board: CellState[][]
   misses: number
   solved: boolean
@@ -19,9 +26,6 @@ interface StoredCatsLevelState {
   catCols: number[]
   catRegions: number[]
   startTime: number
-  lastHintEarnedTime: number
-  hintsEarned: number
-  hintsUsed: number
 }
 
 interface StoredCatsProgress {
@@ -30,13 +34,21 @@ interface StoredCatsProgress {
   levels: Record<string, StoredCatsLevelState>
 }
 
+interface CachedLevelData extends Level {
+  generatorVersion: number
+}
+
 let state: GameState | null = null
-let mode: Mode = 'cat'
 let rowEmojis: string[] = []
 let hintCell: [number, number] | null = null
 let hintToastTimeout: ReturnType<typeof setTimeout> | null = null
 let timerInterval: ReturnType<typeof setInterval> | null = null
 let hintClickLocked = false
+let lastTapTime = 0
+let lastTapKey = ''
+let tapTimer: ReturnType<typeof setTimeout> | null = null
+let currentLevelStale = false
+let levelWorker: Worker | null = null
 
 declare global {
   interface Window {
@@ -45,11 +57,7 @@ declare global {
 }
 
 function createEmptyProgress(): StoredCatsProgress {
-  return {
-    currentLevel: 1,
-    clearedLevels: [],
-    levels: {},
-  }
+  return { currentLevel: 1, clearedLevels: [], levels: {} }
 }
 
 function loadProgress(): StoredCatsProgress {
@@ -73,11 +81,61 @@ function saveProgress(progress: StoredCatsProgress): void {
   localStorage.setItem(CATS_PROGRESS_KEY, JSON.stringify(progress))
 }
 
+// ---------------------------------------------------------------------------
+// Level data cache – persists generated layouts keyed by level number.
+// ---------------------------------------------------------------------------
+function loadLevelCache(): Record<string, CachedLevelData> {
+  try {
+    const raw = localStorage.getItem(LEVEL_CACHE_KEY)
+    return raw ? (JSON.parse(raw) as Record<string, CachedLevelData>) : {}
+  } catch { return {} }
+}
+
+function getCachedLevel(levelNum: number): CachedLevelData | null {
+  return loadLevelCache()[String(levelNum)] ?? null
+}
+
+function storeCachedLevel(data: CachedLevelData): void {
+  const cache = loadLevelCache()
+  cache[String(data.levelNum)] = data
+  localStorage.setItem(LEVEL_CACHE_KEY, JSON.stringify(cache))
+}
+
+function deleteCachedLevel(levelNum: number): void {
+  const cache = loadLevelCache()
+  delete cache[String(levelNum)]
+  localStorage.setItem(LEVEL_CACHE_KEY, JSON.stringify(cache))
+}
+
+// ---------------------------------------------------------------------------
+// Web Worker – pre-generates upcoming levels in the background.
+// ---------------------------------------------------------------------------
+function getLevelWorker(): Worker {
+  if (!levelWorker) {
+    levelWorker = new Worker(new URL('./levelWorker.ts', import.meta.url), { type: 'module' })
+    levelWorker.onmessage = (e: MessageEvent<LevelReadyMessage>) => {
+      if (e.data?.type === 'LEVEL_READY') storeCachedLevel(e.data.level)
+    }
+  }
+  return levelWorker
+}
+
+function requestPreGeneration(fromLevel: number): void {
+  const cache = loadLevelCache()
+  const needed: number[] = []
+  for (let i = 1; i <= PRE_GENERATE_COUNT; i++) {
+    const n = fromLevel + i
+    const cached = cache[String(n)]
+    if (!cached || cached.generatorVersion !== GENERATOR_VERSION) needed.push(n)
+  }
+  if (needed.length > 0) getLevelWorker().postMessage({ type: 'GENERATE', levelNums: needed })
+}
+
 function restoreLevelState(baseState: GameState, stored?: StoredCatsLevelState): GameState {
   if (!stored) return baseState
+  if (stored.hash !== baseState.hash) return baseState
   if (!Array.isArray(stored.board) || stored.board.length !== baseState.size) return baseState
   if (!stored.board.every(row => Array.isArray(row) && row.length === baseState.size)) return baseState
-
   baseState.board = stored.board.map(row => [...row])
   baseState.misses = typeof stored.misses === 'number' ? stored.misses : 0
   baseState.solved = Boolean(stored.solved)
@@ -85,15 +143,12 @@ function restoreLevelState(baseState: GameState, stored?: StoredCatsLevelState):
   baseState.catCols = new Set(Array.isArray(stored.catCols) ? stored.catCols : [])
   baseState.catRegions = new Set(Array.isArray(stored.catRegions) ? stored.catRegions : [])
   baseState.startTime = typeof stored.startTime === 'number' ? stored.startTime : baseState.startTime
-  baseState.lastHintEarnedTime =
-    typeof stored.lastHintEarnedTime === 'number' ? stored.lastHintEarnedTime : baseState.lastHintEarnedTime
-  baseState.hintsEarned = typeof stored.hintsEarned === 'number' ? stored.hintsEarned : 0
-  baseState.hintsUsed = typeof stored.hintsUsed === 'number' ? stored.hintsUsed : 0
   return baseState
 }
 
 function toStoredLevelState(current: GameState): StoredCatsLevelState {
   return {
+    hash: current.hash,
     board: current.board.map(row => [...row]),
     misses: current.misses,
     solved: current.solved,
@@ -101,9 +156,6 @@ function toStoredLevelState(current: GameState): StoredCatsLevelState {
     catCols: [...current.catCols],
     catRegions: [...current.catRegions],
     startTime: current.startTime,
-    lastHintEarnedTime: current.lastHintEarnedTime,
-    hintsEarned: current.hintsEarned,
-    hintsUsed: current.hintsUsed,
   }
 }
 
@@ -119,7 +171,6 @@ function persistCurrentState(): void {
   }
   saveProgress(progress)
 }
-
 function resetSavedLevel(levelNum: number): void {
   const progress = loadProgress()
   const levelKey = String(levelNum)
@@ -131,20 +182,15 @@ function resetSavedLevel(levelNum: number): void {
 
 function installDebugConsoleCommands(): void {
   window.grantHints = (count = 1) => {
-    if (!state) {
-      console.warn('Open Cat Queens before granting hints.')
-      return
-    }
     const amount = Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0
     if (amount <= 0) {
       console.warn('Usage: grantHints(1)')
       return
     }
-    state.hintsEarned += amount
+    hintStore.grantHints(amount)
     updateHintBtn()
     updateHintTimer_display()
-    persistCurrentState()
-    console.info(`Granted ${amount} hint${amount === 1 ? '' : 's'}. Available: ${hintsAvailable(state)}`)
+    console.info(`Granted ${amount} hint${amount === 1 ? '' : 's'}. Available: ${hintStore.hintsAvailable()}`)
   }
 }
 
@@ -152,10 +198,27 @@ export function renderCatsGame(levelNum?: number): void {
   if (timerInterval) clearInterval(timerInterval)
   const progress = loadProgress()
   const targetLevel = levelNum ?? progress.currentLevel ?? 1
-  const level = generateLevel(targetLevel)
+
+  // Use cached level if available (even if stale version – stale levels remain
+  // playable; a warning is shown on the Reset button). Only generate
+  // synchronously when there is no cached copy at all.
+  const cached = getCachedLevel(targetLevel)
+  let level: Level
+  if (cached) {
+    level = cached
+    currentLevelStale = cached.generatorVersion !== GENERATOR_VERSION
+  } else {
+    level = generateLevel(targetLevel)
+    storeCachedLevel({ ...level, generatorVersion: GENERATOR_VERSION })
+    currentLevelStale = false
+  }
+
   state = restoreLevelState(createGameState(level), progress.levels[String(targetLevel)])
-  mode = 'cat'
+  requestPreGeneration(targetLevel)
   hintCell = null
+  lastTapTime = 0
+  lastTapKey = ''
+  if (tapTimer) { clearTimeout(tapTimer); tapTimer = null }
   const emojiRng = mulberry32(targetLevel ^ 0xca7face5)
   const pass1 = shuffle([...CAT_EMOJIS], emojiRng)
   const pass2 = shuffle([...CAT_EMOJIS], emojiRng)
@@ -164,12 +227,8 @@ export function renderCatsGame(levelNum?: number): void {
   render()
   persistCurrentState()
   timerInterval = setInterval(() => {
-    if (!state) return
-    const changed = updateHintTimer(state)
-    if (changed) {
-      updateHintBtn()
-      persistCurrentState()
-    }
+    const changed = hintStore.updateHintTimer()
+    if (changed) updateHintBtn()
     updateHintTimer_display()
   }, 1000)
 }
@@ -201,10 +260,9 @@ function render(): void {
         </div>
       </div>
       <div class="cats-controls">
-        <button class="mode-btn ${mode === 'cat' ? 'active' : ''}" id="catModeBtn">🐱 Cat</button>
-        <button class="mode-btn ${mode === 'cross' ? 'active' : ''}" id="crossModeBtn">✕ Cross</button>
-        <button class="hint-btn" id="hintBtn" ${hintsAvailable(s) <= 0 ? 'disabled' : ''}>
-          <span id="hintCount">💡 ${hintsAvailable(s)}</span><span id="hintTimer" style="font-size:0.7em;display:block;"></span>
+          <button class="reset-btn${currentLevelStale ? ' stale' : ''}" id="resetBtn">${currentLevelStale ? '⚠️ ' : ''}↺ Reset</button>
+        <button class="hint-btn" id="hintBtn" ${hintStore.hintsAvailable() <= 0 ? 'disabled' : ''}>
+          <span id="hintCount">💡 ${hintStore.hintsAvailable()}</span><span id="hintTimer" style="font-size:0.7em;display:block;"></span>
         </button>
       </div>
     </div>
@@ -230,36 +288,28 @@ function renderCells(s: GameState): string {
 }
 
 function updateHintBtn(): void {
-  if (!state) return
   const btn = document.getElementById('hintBtn') as HTMLButtonElement | null
   if (!btn) return
-  const avail = hintsAvailable(state)
+  const avail = hintStore.hintsAvailable()
   btn.disabled = avail <= 0
   const countEl = document.getElementById('hintCount')
   if (countEl) countEl.textContent = `💡 ${avail}`
   const timerEl = document.getElementById('hintTimer')
-  if (timerEl && avail <= 0) {
-    const ms = msUntilNextHint(state)
+  if (timerEl) {
+    const ms = hintStore.msUntilNextHint()
     const mins = Math.floor(ms / 60000)
     const secs = Math.floor((ms % 60000) / 1000)
-    timerEl.textContent = `${mins}:${secs.toString().padStart(2, '0')}`
-  } else if (timerEl) {
-    timerEl.textContent = ''
+    timerEl.textContent = `next ${mins}:${secs.toString().padStart(2, '0')}`
   }
 }
 
 function updateHintTimer_display(): void {
-  if (!state) return
   const timerEl = document.getElementById('hintTimer')
   if (!timerEl) return
-  if (hintsAvailable(state) <= 0) {
-    const ms = msUntilNextHint(state)
-    const mins = Math.floor(ms / 60000)
-    const secs = Math.floor((ms % 60000) / 1000)
-    timerEl.textContent = `${mins}:${secs.toString().padStart(2, '0')}`
-  } else {
-    timerEl.textContent = ''
-  }
+  const ms = hintStore.msUntilNextHint()
+  const mins = Math.floor(ms / 60000)
+  const secs = Math.floor((ms % 60000) / 1000)
+  timerEl.textContent = `next ${mins}:${secs.toString().padStart(2, '0')}`
 }
 
 function bindEvents(): void {
@@ -276,27 +326,31 @@ function bindEvents(): void {
     localStorage.setItem('theme', next)
   })
 
-  document.getElementById('catModeBtn')?.addEventListener('click', () => setMode('cat'))
-  document.getElementById('crossModeBtn')?.addEventListener('click', () => setMode('cross'))
-
-  document.querySelector('.misses-badge')?.addEventListener('click', () => {
+  document.getElementById('resetBtn')?.addEventListener('click', () => {
     if (!state) return
-    const shouldReset = window.confirm('Reset this level and clear current progress?')
+    const msg = currentLevelStale
+      ? 'This level was generated by an older algorithm version.\nReset to regenerate it with the latest version?'
+      : 'Reset this level and clear current progress?'
+    const shouldReset = window.confirm(msg)
     if (!shouldReset) return
     resetSavedLevel(state.levelNum)
+    if (currentLevelStale) deleteCachedLevel(state.levelNum)
     renderCatsGame(state.levelNum)
   })
 
   document.getElementById('hintBtn')?.addEventListener('click', () => {
     if (!state) return
     if (hintClickLocked) return
-    if (hintsAvailable(state) <= 0) return
+    if (hintStore.hintsAvailable() <= 0) return
     hintClickLocked = true
-    setTimeout(() => {
-      hintClickLocked = false
-    }, 150)
-    const hint = useHint(state)
-    if (!hint) return
+    setTimeout(() => { hintClickLocked = false }, 150)
+    if (!hintStore.consumeHint()) return
+    const hint = getHint(state)
+    if (!hint) {
+      // Refund – no actionable hint found
+      hintStore.grantHints(1)
+      return
+    }
 
     if (hint.action === 'cross') {
       const targets = hint.cells && hint.cells.length > 0 ? hint.cells : [{ row: hint.row, col: hint.col }]
@@ -310,10 +364,7 @@ function bindEvents(): void {
       updateHintBtn()
       persistCurrentState()
       showToast(`💡 ${hint.reason}`)
-      setTimeout(() => {
-        hintCell = null
-        redrawBoard()
-      }, 3000)
+      setTimeout(() => { hintCell = null; redrawBoard() }, 3000)
       return
     }
 
@@ -322,10 +373,7 @@ function bindEvents(): void {
     updateHintBtn()
     persistCurrentState()
     showToast(`💡 ${hint.reason}`)
-    setTimeout(() => {
-      hintCell = null
-      redrawBoard()
-    }, 3000)
+    setTimeout(() => { hintCell = null; redrawBoard() }, 3000)
   })
 
   document.getElementById('prevBtn')?.addEventListener('click', () => {
@@ -346,24 +394,37 @@ function bindEvents(): void {
     if (!cell || !state || state.solved) return
     const row = parseInt(cell.dataset.row!)
     const col = parseInt(cell.dataset.col!)
-    handleCellClick(row, col)
+    handleCellInteraction(row, col)
   })
 }
 
-function setMode(m: Mode): void {
-  mode = m
-  document.getElementById('catModeBtn')?.classList.toggle('active', m === 'cat')
-  document.getElementById('crossModeBtn')?.classList.toggle('active', m === 'cross')
+function handleCellInteraction(row: number, col: number): void {
+  if (!state || state.solved) return
+  const now = Date.now()
+  const key = `${row},${col}`
+  if (now - lastTapTime < DOUBLE_TAP_MS && lastTapKey === key) {
+    // Double-tap: cancel pending cross, place cat instead
+    if (tapTimer) { clearTimeout(tapTimer); tapTimer = null }
+    lastTapTime = 0
+    lastTapKey = ''
+    handleCatPlacement(row, col)
+  } else {
+    // First tap: schedule a cross after the double-tap window
+    lastTapTime = now
+    lastTapKey = key
+    if (tapTimer) clearTimeout(tapTimer)
+    tapTimer = setTimeout(() => {
+      tapTimer = null
+      if (lastTapKey === key) {
+        lastTapKey = ''
+        handleCrossToggle(row, col)
+      }
+    }, DOUBLE_TAP_MS)
+  }
 }
 
-function handleCellClick(row: number, col: number): void {
+function handleCatPlacement(row: number, col: number): void {
   if (!state) return
-  if (mode === 'cross') {
-    toggleCross(state, row, col)
-    redrawBoard()
-    persistCurrentState()
-    return
-  }
   const result = placeCat(state, row, col)
   if (result.miss) {
     redrawBoard()
@@ -375,6 +436,13 @@ function handleCellClick(row: number, col: number): void {
   redrawBoard()
   persistCurrentState()
   if (result.solved) showWin()
+}
+
+function handleCrossToggle(row: number, col: number): void {
+  if (!state) return
+  toggleCross(state, row, col)
+  redrawBoard()
+  persistCurrentState()
 }
 
 function redrawBoard(): void {

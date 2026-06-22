@@ -1,8 +1,7 @@
-const CACHE = 'replisa-v1';
+const CACHE = 'replisa-v2';
 const ASSETS = [
   '/replisa/',
   '/replisa/index.html',
-  '/replisa/manifest.json',
 ];
 
 self.addEventListener('install', e => {

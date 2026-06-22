@@ -44,7 +44,6 @@
   padding: 0.2rem 0.6rem;
   border-radius: 999px;
   font-weight: 600;
-  cursor: pointer;
 }
 
 [data-theme="dark"] .misses-badge {
@@ -114,7 +113,7 @@
   border-top: 1px solid var(--border);
 }
 
-.mode-btn {
+.reset-btn {
   flex: 1;
   padding: 0.75rem;
   border-radius: var(--radius);
@@ -126,15 +125,19 @@
   transition: all 0.15s;
 }
 
-.mode-btn.active {
-  background: var(--accent-light);
-  color: var(--accent);
-  border-color: var(--accent);
+.reset-btn:active {
+  background: #ffb3b3;
+  color: #7a2020;
 }
 
-[data-theme="dark"] .mode-btn.active {
-  background: var(--accent-light);
-  color: var(--text);
+.reset-btn.stale {
+  border: 2px solid #f0a030;
+  color: #7a4000;
+}
+
+[data-theme="dark"] .reset-btn.stale {
+  border-color: #f0a030;
+  color: #f0d060;
 }
 
 .hint-btn {
