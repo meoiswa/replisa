@@ -1,8 +1,12 @@
 .cats-game {
   display: flex;
   flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
   min-height: 100vh;
+  min-height: 100dvh;
   background: var(--bg);
+  overflow: hidden;
 }
 
 .cats-header {
@@ -57,6 +61,8 @@
   align-items: center;
   justify-content: center;
   padding: 1rem;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .cats-board {
@@ -67,8 +73,8 @@
   border-radius: var(--radius-sm);
   overflow: hidden;
   touch-action: none;
-  max-width: min(calc(100vw - 2rem), calc(100vh - 220px));
-  width: min(calc(100vw - 2rem), calc(100vh - 220px));
+  max-width: min(calc(100vw - 2rem), calc(100dvh - 270px));
+  width: min(calc(100vw - 2rem), calc(100dvh - 270px));
 }
 
 .cell {
