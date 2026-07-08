@@ -3,7 +3,8 @@ import { mulberry32, shuffle } from './rng'
 export interface Level {
   size: number
   regions: number[][]   // regions[row][col] = regionId (0-indexed)
-  solution: number[]    // solution[row] = column of cat
+  solution: number[]    // solution[row] = column of cat (canonical/primary solution)
+  solutions: number[][] // all valid solutions
   levelNum: number
   hash: string          // fingerprint of regions+solution for progress validation
 }
@@ -13,7 +14,7 @@ export interface Level {
  * affects level layout or uniqueness. Stored levels with an older version are
  * flagged as stale and the player is offered to regenerate them.
  */
-export const GENERATOR_VERSION = 1
+export const GENERATOR_VERSION = 2
 
 function computeLevelHash(size: number, regions: number[][], solution: number[]): string {
   let h = (size * 0x9e3779b9) >>> 0
@@ -219,6 +220,30 @@ function countSolutions(size: number, regions: number[][], limit = 2): number {
   return count
 }
 
+/** Enumerate ALL valid solutions for the given regions. */
+function getAllSolutions(size: number, regions: number[][]): number[][] {
+  const solutions: number[][] = []
+  const placement = new Array<number>(size).fill(-1)
+  const usedCols = new Set<number>()
+  const usedRegions = new Set<number>()
+
+  function solve(row: number): void {
+    if (row === size) { solutions.push([...placement]); return }
+    for (let col = 0; col < size; col++) {
+      if (usedCols.has(col)) continue
+      const rid = regions[row][col]
+      if (usedRegions.has(rid)) continue
+      if (row > 0 && Math.abs(placement[row - 1] - col) <= 1) continue
+      placement[row] = col; usedCols.add(col); usedRegions.add(rid)
+      solve(row + 1)
+      usedRegions.delete(rid); usedCols.delete(col); placement[row] = -1
+    }
+  }
+
+  solve(0)
+  return solutions
+}
+
 /** Generate a full level with a guaranteed-unique solution wherever possible. */
 export function generateLevel(levelNum: number): Level {
   const size = getGridSize(levelNum)
@@ -231,18 +256,20 @@ export function generateLevel(levelNum: number): Level {
   const solutionStr = solution.join(',')
   const alternates = getAllPlacements(size).filter(p => p.join(',') !== solutionStr)
 
-  // Try up to 5 region seeds. The coverage-aware fill usually succeeds on the
-  // first or second attempt; retries guard against edge-case configurations.
-  for (let attempt = 0; attempt < 5; attempt++) {
+  // Try up to 20 region seeds. The coverage-aware fill usually succeeds on the
+  // first or second attempt; extra retries guard against edge-case configurations.
+  for (let attempt = 0; attempt < 20; attempt++) {
     const regionRng = mulberry32(levelSeed(levelNum) ^ (attempt * 0x6c62272e))
     const regions = generateRegionsWithCoverage(size, solution, alternates, regionRng)
     if (countSolutions(size, regions, 2) === 1)
-      return { size, regions, solution, levelNum, hash: computeLevelHash(size, regions, solution) }
+      return { size, regions, solution, solutions: [solution], levelNum, hash: computeLevelHash(size, regions, solution) }
   }
 
-  // Fallback: return the last attempt even if not unique.
-  console.warn(`Level ${levelNum}: returning best-effort level (unique solution not found in 5 attempts)`)
+  // Fallback: return the last attempt but enumerate all solutions so the game
+  // can validate placements correctly even if the level is not unique.
+  console.warn(`Level ${levelNum}: returning best-effort level (unique solution not found in 20 attempts)`)
   const fallbackRng = mulberry32(levelSeed(levelNum) ^ 0xdeadbeef)
   const regions = generateRegionsWithCoverage(size, solution, alternates, fallbackRng)
-  return { size, regions, solution, levelNum, hash: computeLevelHash(size, regions, solution) }
+  const solutions = getAllSolutions(size, regions)
+  return { size, regions, solution, solutions, levelNum, hash: computeLevelHash(size, regions, solution) }
 }

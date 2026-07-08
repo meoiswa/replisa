@@ -1,5 +1,6 @@
 const GLOBAL_HINTS_KEY = 'replisa.hints.v1'
 const HINT_INTERVAL_MS = 5 * 60 * 1000 // 5 minutes
+const MAX_HINTS = 10
 
 interface GlobalHintsState {
   earned: number
@@ -43,15 +44,25 @@ export function hintsAvailable(): number {
 
 export function updateHintTimer(): boolean {
   const s = loadGlobalHints()
+  const available = s.earned - s.used
+  const canEarn = Math.max(0, MAX_HINTS - available)
   const elapsed = Date.now() - s.lastEarnedTime
-  const newHints = Math.floor(elapsed / HINT_INTERVAL_MS)
-  if (newHints > 0) {
+  const elapsedHints = Math.floor(elapsed / HINT_INTERVAL_MS)
+  // Always advance the timer baseline so long absences don't accumulate
+  if (elapsedHints > 0) {
+    const newHints = Math.min(canEarn, elapsedHints)
     s.earned += newHints
-    s.lastEarnedTime += newHints * HINT_INTERVAL_MS
+    s.lastEarnedTime += elapsedHints * HINT_INTERVAL_MS
     saveGlobalHints(s)
-    return true
+    return newHints > 0
   }
   return false
+}
+
+export function syncHintTimerToNow(): void {
+  const s = loadGlobalHints()
+  s.lastEarnedTime = Date.now()
+  saveGlobalHints(s)
 }
 
 export function msUntilNextHint(): number {

@@ -242,9 +242,10 @@ export function getHint(state: GameState): Hint | null {
   }
 
   // Fallback: reveal from solution
+  const activeSolution = state.activeSolutions[0] ?? state.solution
   for (let row = 0; row < size; row++) {
     if (!state.catRows.has(row)) {
-      const col = state.solution[row]
+      const col = activeSolution[row]
       if (state.board[row][col] !== 'cat')
         return { row, col, action: 'cat', reason: `Logical deduction narrows this cell` }
     }
