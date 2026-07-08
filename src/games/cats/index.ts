@@ -52,10 +52,17 @@ let levelWorker: Worker | null = null
 let pointerDownCell: [number, number] | null = null
 let isDragging = false
 let lastDraggedCellKey = ''
+let dragStartCrossApplied = false
+let renderToken = 0
+
+function isRenderTokenStale(token: number): boolean {
+  return token !== renderToken
+}
 
 function resetDragState(): void {
   isDragging = false
   lastDraggedCellKey = ''
+  dragStartCrossApplied = false
 }
 
 declare global {
@@ -219,6 +226,7 @@ function installDebugConsoleCommands(): void {
 
 export function renderCatsGame(levelNum?: number): void {
   if (timerInterval) clearInterval(timerInterval)
+  const currentRenderToken = ++renderToken
   const progress = loadProgress()
   const targetLevel = levelNum ?? progress.currentLevel ?? 1
 
@@ -226,17 +234,25 @@ export function renderCatsGame(levelNum?: number): void {
   // playable; a warning is shown on the Reset button). Only generate
   // synchronously when there is no cached copy at all.
   const cached = getCachedLevel(targetLevel)
-  let level: Level
   if (cached) {
-    level = cached
     currentLevelStale = cached.generatorVersion !== GENERATOR_VERSION
+    loadAndRenderLevel(cached, targetLevel, progress.levels[String(targetLevel)])
   } else {
-    level = generateLevel(targetLevel)
-    storeCachedLevel({ ...level, generatorVersion: GENERATOR_VERSION })
     currentLevelStale = false
+    renderLoadingState(targetLevel)
+    // Yield one frame so the loading UI can paint before synchronous generation.
+    window.requestAnimationFrame(() => {
+      if (isRenderTokenStale(currentRenderToken)) return
+      const generated = generateLevel(targetLevel)
+      storeCachedLevel({ ...generated, generatorVersion: GENERATOR_VERSION })
+      if (isRenderTokenStale(currentRenderToken)) return
+      loadAndRenderLevel(generated, targetLevel, progress.levels[String(targetLevel)])
+    })
   }
+}
 
-  state = restoreLevelState(createGameState(level), progress.levels[String(targetLevel)])
+function loadAndRenderLevel(level: Level, targetLevel: number, storedState?: StoredCatsLevelState): void {
+  state = restoreLevelState(createGameState(level), storedState)
   requestPreGeneration(targetLevel)
   hintStore.syncHintTimerToNow()
   hintCell = null
@@ -255,6 +271,17 @@ export function renderCatsGame(levelNum?: number): void {
     if (changed) updateHintBtn()
     updateHintTimer_display()
   }, 1000)
+}
+
+function renderLoadingState(levelNum: number): void {
+  const app = document.getElementById('app')
+  if (!app) return
+  app.innerHTML = `
+    <div class="cats-loading">
+      <div class="cats-loading-spinner" aria-hidden="true"></div>
+      <p>Loading level ${levelNum}…</p>
+    </div>
+  `
 }
 
 function render(): void {
@@ -421,6 +448,7 @@ function bindEvents(): void {
     pointerDownCell = [row, col]
     isDragging = false
     lastDraggedCellKey = `${row},${col}`
+    dragStartCrossApplied = false
     board.setPointerCapture(e.pointerId)
     e.preventDefault()
   })
@@ -435,6 +463,15 @@ function bindEvents(): void {
     const key = `${row},${col}`
     const startKey = `${pointerDownCell[0]},${pointerDownCell[1]}`
     if (key !== startKey || isDragging) {
+      if (!isDragging && !dragStartCrossApplied) {
+        const [startRow, startCol] = pointerDownCell
+        dragStartCrossApplied = true
+        if (state.board[startRow][startCol] === 'empty') {
+          toggleCross(state, startRow, startCol)
+          redrawBoard()
+          persistCurrentState()
+        }
+      }
       isDragging = true
       if (key !== lastDraggedCellKey) {
         lastDraggedCellKey = key
