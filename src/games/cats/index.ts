@@ -100,7 +100,14 @@ function loadLevelCache(): Record<string, CachedLevelData> {
 }
 
 function getCachedLevel(levelNum: number): CachedLevelData | null {
-  return loadLevelCache()[String(levelNum)] ?? null
+  const cached = loadLevelCache()[String(levelNum)] ?? null
+  if (!cached) return null
+  // Validate that solutions is present – old cached data pre-dating the
+  // multi-solution field will lack it, causing activeSolutions.filter to
+  // crash at runtime.  Treat such entries as a cache miss so the level is
+  // regenerated with all required fields.
+  if (!Array.isArray(cached.solutions) || cached.solutions.length === 0) return null
+  return cached
 }
 
 function storeCachedLevel(data: CachedLevelData): void {
@@ -444,6 +451,7 @@ function bindEvents(): void {
     if (!pointerDownCell) return
     const [startRow, startCol] = pointerDownCell
     const wasDragging = isDragging
+    pointerDownCell = null
     resetDragState()
     if (wasDragging) return
     handleCellInteraction(startRow, startCol)
