@@ -6,6 +6,8 @@ export interface GameState {
   size: number
   regions: number[][]
   solution: number[]
+  solutions: number[][]
+  activeSolutions: number[][]
   board: CellState[][]
   misses: number
   solved: boolean
@@ -22,6 +24,8 @@ export function createGameState(level: Level): GameState {
     size: level.size,
     regions: level.regions,
     solution: level.solution,
+    solutions: level.solutions,
+    activeSolutions: level.solutions,
     board: Array.from({ length: level.size }, () => new Array<CellState>(level.size).fill('empty')),
     misses: 0,
     solved: false,
@@ -48,6 +52,14 @@ export function placeCat(state: GameState, row: number, col: number): PlaceResul
     state.catRows.delete(row)
     state.catCols.delete(col)
     state.catRegions.delete(state.regions[row][col])
+    // Recompute activeSolutions to match all remaining placed cats
+    state.activeSolutions = state.solutions
+    for (let r = 0; r < state.size; r++) {
+      const placedCol = state.board[r].indexOf('cat')
+      if (placedCol !== -1) {
+        state.activeSolutions = state.activeSolutions.filter(sol => sol[r] === placedCol)
+      }
+    }
     return { valid: true, miss: false, solved: false }
   }
 
@@ -55,13 +67,15 @@ export function placeCat(state: GameState, row: number, col: number): PlaceResul
     return { valid: false, miss: false, solved: false }
   }
 
-  const correct = state.solution[row] === col
-  if (!correct) {
+  // Validate against all currently active solutions
+  const matchingSolutions = state.activeSolutions.filter(sol => sol[row] === col)
+  if (matchingSolutions.length === 0) {
     state.misses++
     state.board[row][col] = 'cross'
     return { valid: false, miss: true, solved: false }
   }
 
+  state.activeSolutions = matchingSolutions
   state.board[row][col] = 'cat'
   state.catRows.add(row)
   state.catCols.add(col)

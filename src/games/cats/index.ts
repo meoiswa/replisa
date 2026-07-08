@@ -49,6 +49,14 @@ let lastTapKey = ''
 let tapTimer: ReturnType<typeof setTimeout> | null = null
 let currentLevelStale = false
 let levelWorker: Worker | null = null
+let pointerDownCell: [number, number] | null = null
+let isDragging = false
+let lastDraggedCellKey = ''
+
+function resetDragState(): void {
+  isDragging = false
+  lastDraggedCellKey = ''
+}
 
 declare global {
   interface Window {
@@ -143,6 +151,14 @@ function restoreLevelState(baseState: GameState, stored?: StoredCatsLevelState):
   baseState.catCols = new Set(Array.isArray(stored.catCols) ? stored.catCols : [])
   baseState.catRegions = new Set(Array.isArray(stored.catRegions) ? stored.catRegions : [])
   baseState.startTime = typeof stored.startTime === 'number' ? stored.startTime : baseState.startTime
+  // Recompute activeSolutions based on placed cats in the restored board
+  baseState.activeSolutions = baseState.solutions
+  for (let r = 0; r < baseState.size; r++) {
+    const placedCol = baseState.board[r].indexOf('cat')
+    if (placedCol !== -1) {
+      baseState.activeSolutions = baseState.activeSolutions.filter(sol => sol[r] === placedCol)
+    }
+  }
   return baseState
 }
 
@@ -215,6 +231,7 @@ export function renderCatsGame(levelNum?: number): void {
 
   state = restoreLevelState(createGameState(level), progress.levels[String(targetLevel)])
   requestPreGeneration(targetLevel)
+  hintStore.syncHintTimerToNow()
   hintCell = null
   lastTapTime = 0
   lastTapKey = ''
@@ -389,12 +406,52 @@ function bindEvents(): void {
   })
 
   const board = document.getElementById('board')!
-  board.addEventListener('click', (e) => {
+  board.addEventListener('pointerdown', (e) => {
     const cell = (e.target as HTMLElement).closest<HTMLElement>('.cell')
     if (!cell || !state || state.solved) return
     const row = parseInt(cell.dataset.row!)
     const col = parseInt(cell.dataset.col!)
-    handleCellInteraction(row, col)
+    pointerDownCell = [row, col]
+    isDragging = false
+    lastDraggedCellKey = `${row},${col}`
+    board.setPointerCapture(e.pointerId)
+    e.preventDefault()
+  })
+
+  board.addEventListener('pointermove', (e) => {
+    if (!pointerDownCell || !state || state.solved) return
+    const el = document.elementFromPoint(e.clientX, e.clientY)
+    const cell = el?.closest<HTMLElement>('.cell')
+    if (!cell) return
+    const row = parseInt(cell.dataset.row!)
+    const col = parseInt(cell.dataset.col!)
+    const key = `${row},${col}`
+    const startKey = `${pointerDownCell[0]},${pointerDownCell[1]}`
+    if (key !== startKey || isDragging) {
+      isDragging = true
+      if (key !== lastDraggedCellKey) {
+        lastDraggedCellKey = key
+        if (state.board[row][col] === 'empty') {
+          toggleCross(state, row, col)
+          redrawBoard()
+          persistCurrentState()
+        }
+      }
+    }
+  })
+
+  board.addEventListener('pointerup', () => {
+    if (!pointerDownCell) return
+    const [startRow, startCol] = pointerDownCell
+    const wasDragging = isDragging
+    resetDragState()
+    if (wasDragging) return
+    handleCellInteraction(startRow, startCol)
+  })
+
+  board.addEventListener('pointercancel', () => {
+    pointerDownCell = null
+    resetDragState()
   })
 }
 
