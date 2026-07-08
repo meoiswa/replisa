@@ -55,7 +55,7 @@ let lastDraggedCellKey = ''
 let dragStartCrossApplied = false
 let renderToken = 0
 
-function isRenderStale(token: number): boolean {
+function isRenderTokenStale(token: number): boolean {
   return token !== renderToken
 }
 
@@ -242,12 +242,11 @@ export function renderCatsGame(levelNum?: number): void {
     renderLoadingState(targetLevel)
     // Yield one frame so the loading UI can paint before synchronous generation.
     window.requestAnimationFrame(() => {
-      if (isRenderStale(currentRenderToken)) return
+      if (isRenderTokenStale(currentRenderToken)) return
       const generated = generateLevel(targetLevel)
       storeCachedLevel({ ...generated, generatorVersion: GENERATOR_VERSION })
-      if (isRenderStale(currentRenderToken)) return
-      const latestProgress = loadProgress()
-      loadAndRenderLevel(generated, targetLevel, latestProgress.levels[String(targetLevel)])
+      if (isRenderTokenStale(currentRenderToken)) return
+      loadAndRenderLevel(generated, targetLevel, progress.levels[String(targetLevel)])
     })
   }
 }
