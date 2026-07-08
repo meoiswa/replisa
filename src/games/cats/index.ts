@@ -230,27 +230,26 @@ export function renderCatsGame(levelNum?: number): void {
   // playable; a warning is shown on the Reset button). Only generate
   // synchronously when there is no cached copy at all.
   const cached = getCachedLevel(targetLevel)
-  let level: Level
   if (cached) {
-    level = cached
     currentLevelStale = cached.generatorVersion !== GENERATOR_VERSION
-    loadAndRenderLevel(level, targetLevel)
+    loadAndRenderLevel(cached, targetLevel, progress.levels[String(targetLevel)])
   } else {
     currentLevelStale = false
     renderLoadingState(targetLevel)
+    // Yield once so the loading UI can paint before synchronous generation.
     window.setTimeout(() => {
       if (currentRenderToken !== renderToken) return
       const generated = generateLevel(targetLevel)
       storeCachedLevel({ ...generated, generatorVersion: GENERATOR_VERSION })
       if (currentRenderToken !== renderToken) return
-      loadAndRenderLevel(generated, targetLevel)
+      const latestProgress = loadProgress()
+      loadAndRenderLevel(generated, targetLevel, latestProgress.levels[String(targetLevel)])
     }, 0)
   }
 }
 
-function loadAndRenderLevel(level: Level, targetLevel: number): void {
-  const progress = loadProgress()
-  state = restoreLevelState(createGameState(level), progress.levels[String(targetLevel)])
+function loadAndRenderLevel(level: Level, targetLevel: number, storedState?: StoredCatsLevelState): void {
+  state = restoreLevelState(createGameState(level), storedState)
   requestPreGeneration(targetLevel)
   hintStore.syncHintTimerToNow()
   hintCell = null
